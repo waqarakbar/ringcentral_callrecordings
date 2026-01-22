@@ -81,12 +81,14 @@ def get_pending_contacts(bq_client, limit=None):
     """
     limit_clause = f"LIMIT {limit}" if limit else ""
     
+    # Cast contactId to STRING to match tracking table type
     query = f"""
-        SELECT src.contactId
+        SELECT CAST(src.contactId AS STRING) as contactId
         FROM `{SOURCE_TABLE}` src
         LEFT JOIN `{TRACKING_TABLE}` trk
-        ON src.contactId = trk.contactId
+        ON CAST(src.contactId AS STRING) = trk.contactId
         WHERE trk.contactId IS NULL
+        order by src.startDate desc
         {limit_clause}
     """
     print("Fetching pending records from BigQuery...")
@@ -126,6 +128,9 @@ def main():
     # Get list of pending contacts (use limit for testing)
     # Remove limit parameter or set to None to process all
     pending_ids = get_pending_contacts(bq_client, limit=10)  # Start with 10 for testing
+    
+    # pending_ids.append(693159199085)
+
     print(f"\n✓ Found {len(pending_ids)} records to process.\n")
 
     if len(pending_ids) == 0:

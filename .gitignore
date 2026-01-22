@@ -1,6 +1,7 @@
 # Environment variables (contains sensitive credentials)
 .env
 secrets/*
+recordings/*
 
 # Python cache
 __pycache__/
