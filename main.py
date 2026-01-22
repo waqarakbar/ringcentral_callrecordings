@@ -127,7 +127,7 @@ def main():
     
     # Get list of pending contacts (use limit for testing)
     # Remove limit parameter or set to None to process all
-    pending_ids = get_pending_contacts(bq_client, limit=10000)  # Start with 10 for testing
+    pending_ids = get_pending_contacts(bq_client, limit=1000)  # Start with 10 for testing
     
     # pending_ids.append(693159199085)
 
