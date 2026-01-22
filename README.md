@@ -15,7 +15,7 @@ Python script for authenticating with the NICE inContact CXone API.
 
 1. **Install dependencies:**
 ```bash
-pip install -r requirements.txt
+run uv sync --locked
 ```
 
 2. **Set up credentials:**
