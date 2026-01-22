@@ -5,6 +5,10 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "db-dtypes>=1.4.4",
     "dotenv>=0.9.9",
+    "google-cloud-bigquery>=3.40.0",
+    "google-cloud-storage>=3.8.0",
+    "pandas>=3.0.0",
     "requests>=2.32.5",
 ]
