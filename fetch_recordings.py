@@ -254,6 +254,7 @@ class RecordingFetcher:
             # Download in chunks
             chunk_size = 8192
             downloaded = 0
+            last_logged_percent = -1
             
             with open(filepath, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=chunk_size):
@@ -261,10 +262,14 @@ class RecordingFetcher:
                         f.write(chunk)
                         downloaded += len(chunk)
                         
-                        # Show progress
+                        # Show progress only at 25% intervals to reduce logging
                         if total_size > 0:
                             progress = (downloaded / total_size) * 100
-                            print(f"\r  Progress: {progress:.1f}% ({downloaded:,}/{total_size:,} bytes)", end="", flush=True)
+                            # Only log at 0%, 25%, 50%, 75%, 100%
+                            current_percent_milestone = int(progress / 25) * 25
+                            if current_percent_milestone != last_logged_percent and current_percent_milestone in [0, 25, 50, 75, 100]:
+                                print(f"  Progress: {progress:.1f}% ({downloaded:,}/{total_size:,} bytes)")
+                                last_logged_percent = current_percent_milestone
             
             print(f"\n✓ Successfully downloaded: {filepath}")
             print(f"  File size: {downloaded:,} bytes")

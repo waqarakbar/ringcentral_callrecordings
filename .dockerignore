@@ -1,0 +1,11 @@
+# .dockerignore
+secrets/
+.env
+.env.*
+.git/
+__pycache__/
+*.pyc
+# uv.lock
+# Keep uv.lock in the ignore list IF you want to generate it fresh, 
+# BUT generally for reproducibility you want to COPY it in Dockerfile.
+# So remove uv.lock from this list if you want to use the one from your repo.

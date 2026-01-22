@@ -4,7 +4,7 @@ import json
 import pandas as pd
 from google.cloud import bigquery
 from google.cloud import storage
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -127,7 +127,7 @@ def main():
     
     # Get list of pending contacts (use limit for testing)
     # Remove limit parameter or set to None to process all
-    pending_ids = get_pending_contacts(bq_client, limit=10)  # Start with 10 for testing
+    pending_ids = get_pending_contacts(bq_client, limit=100)  # Start with 10 for testing
     
     # pending_ids.append(693159199085)
 
@@ -167,7 +167,7 @@ def main():
                     "contactId": str(contact_id),
                     "recording_filename": None,
                     "gcs_uri": None,
-                    "fetch_datetime": datetime.utcnow().isoformat(),
+                    "fetch_datetime": datetime.now(timezone.utc).isoformat(),
                     "status": "NO_RECORDING",
                     "raw_response": "No recording files found in metadata"
                 }
@@ -195,7 +195,7 @@ def main():
                 "contactId": str(contact_id),
                 "recording_filename": file_name,
                 "gcs_uri": gcs_uri,
-                "fetch_datetime": datetime.utcnow().isoformat(),
+                "fetch_datetime": datetime.now(timezone.utc).isoformat(),
                 "status": "SUCCESS",
                 "raw_response": raw_response_text
             }
@@ -213,7 +213,7 @@ def main():
                 "contactId": str(contact_id),
                 "recording_filename": None,
                 "gcs_uri": None,
-                "fetch_datetime": datetime.utcnow().isoformat(),
+                "fetch_datetime": datetime.now(timezone.utc).isoformat(),
                 "status": "NOT_FOUND",
                 "raw_response": str(e)
             }
@@ -227,7 +227,7 @@ def main():
                 "contactId": str(contact_id),
                 "recording_filename": None,
                 "gcs_uri": None,
-                "fetch_datetime": datetime.utcnow().isoformat(),
+                "fetch_datetime": datetime.now(timezone.utc).isoformat(),
                 "status": "FAILED",
                 "raw_response": str(e)
             }
