@@ -19,5 +19,7 @@ RUN uv sync --locked
 # 4. Copy the rest of your application code
 COPY . .
 
-# 5. Define the entrypoint
-ENTRYPOINT ["uv", "run", "main.py"]
+# 5. Define the default entrypoint (can be overridden per Cloud Run Job)
+# Job 1 (recording fetcher): uses default -> main.py
+# Job 2 (transcriber): override with --command "uv,run,python,transcribe_v2.py"
+ENTRYPOINT ["uv", "run", "python", "main.py"]
