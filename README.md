@@ -1,156 +1,267 @@
-# NICE inContact CXone API Authentication
+# 🎙️ CXone Call Recording Pipeline
 
-Python script for authenticating with the NICE inContact CXone API.
+**End-to-end cloud pipeline for fetching, storing, transcribing, and analyzing call center recordings at scale.**
 
-## Features
+Built with Python · NICE CXone API · Google Cloud Platform · Deepgram AI
 
-- ✅ OAuth 2.0 password grant authentication
-- ✅ Automatic token expiry management
-- ✅ Secure credential storage using environment variables
-- ✅ Comprehensive error handling
-- ✅ Reusable class-based design
-- ✅ Type hints for better IDE support
+---
 
-## Installation
+## 🔥 What This Does
 
-1. **Install dependencies:**
-```bash
-run uv sync --locked
+This production-ready pipeline processes **80,000+ call recordings** automatically:
+
+1. **Fetches** recording metadata from the NICE CXone (inContact) API
+2. **Downloads** audio files and uploads them to Google Cloud Storage
+3. **Transcribes** recordings using Deepgram's Nova-3 speech-to-text model
+4. **Identifies speakers** with AI-powered diarization (Speaker 1, Speaker 2, etc.)
+5. **Analyzes** each call for sentiment, topics, intents, and generates summaries
+6. **Tracks** everything in BigQuery with full audit trail and resume capability
+
+All processing is idempotent — the pipeline can be stopped and restarted at any point without reprocessing completed records.
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────┐     ┌──────────────┐     ┌──────────────────┐
+│  BigQuery    │     │  CXone API   │     │  Google Cloud    │
+│  Source      │────▶│  Recording   │────▶│  Storage (GCS)   │
+│  Table       │     │  Download    │     │  Audio Bucket    │
+└─────────────┘     └──────────────┘     └────────┬─────────┘
+                                                   │
+                    ┌──────────────┐                │
+                    │  Deepgram    │◀───────────────┘
+                    │  Nova-3 AI   │   (Signed URL)
+                    └──────┬───────┘
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+    ┌─────▼─────┐   ┌─────▼─────┐   ┌─────▼─────┐
+    │Transcribe │   │ Speaker   │   │  Audio    │
+    │ Speech    │   │ Diarize   │   │  Intel    │
+    │ to Text   │   │ (who said │   │ Sentiment │
+    │           │   │  what)    │   │ Topics    │
+    │           │   │           │   │ Intents   │
+    │           │   │           │   │ Summary   │
+    └─────┬─────┘   └─────┬─────┘   └─────┬─────┘
+          │                │                │
+          └────────────────┼────────────────┘
+                           │
+                    ┌──────▼───────┐
+                    │  BigQuery    │
+                    │  Tracking    │
+                    │  Table       │
+                    └──────────────┘
 ```
 
-2. **Set up credentials:**
+---
+
+## ✨ Key Features
+
+### Recording Pipeline (`main.py`)
+- **Batch processing** — Handles 80,000+ contacts with configurable batch sizes
+- **Automatic token refresh** — CXone tokens refresh transparently before each API call
+- **GCS upload** — Recordings stored in organized bucket paths
+- **Smart resumption** — LEFT JOIN query skips already-processed contacts
+- **Rate limiting** — Configurable delays to respect API quotas
+- **Full audit trail** — Every contact logged with status, timestamp, and raw API response
+
+### Transcription & Analysis (`transcribe_v2.py`)
+- **Deepgram Nova-3** — State-of-the-art speech-to-text accuracy
+- **Speaker diarization** — Identifies and labels different speakers in the conversation
+- **Multichannel detection** — Auto-detects stereo audio for perfect Agent/Customer separation
+- **Dual transcript storage** — Both raw text and diarized conversation format
+- **Audio Intelligence** (single API call):
+  - 📋 **Summarization** — AI-generated call summary
+  - 🏷️ **Topic Detection** — Identifies discussion topics with confidence scores
+  - 🎯 **Intent Recognition** — Detects caller intent (complaint, inquiry, etc.)
+  - 💬 **Sentiment Analysis** — Per-segment and overall sentiment scoring
+
+### Cloud Deployment
+- **Dockerized** — Optimized multi-layer Dockerfile with `uv` package manager
+- **Cloud Run Jobs** — Two independent jobs from a single Docker image
+- **Secret Manager** — API credentials secured via Google Secret Manager
+- **Cost-effective** — Pay-per-execution pricing, no idle costs
+
+---
+
+## 📊 Sample Output
+
+### Diarized Transcription
+```
+Speaker 1: Good afternoon. John and John online sales. Dallas speaking. How can I help you today?
+Speaker 2: Hi. Good day. It's Rod Sanderson. How are you?
+Speaker 1: Good, thank you. How can I assist?
+Speaker 2: Can I speak to one of the technicians, please?
+Speaker 3: Afternoon, John and John. It's Simon speaking.
+Speaker 2: Hey, Simon. I've got a question about my Honda engine...
+```
+
+### Audio Intelligence Results
+| Feature | Sample Output |
+|---------|--------------|
+| **Summary** | "Customer called to speak with a technician about a Honda engine issue. Call was transferred from reception to the service department." |
+| **Topics** | `Honda engine`, `service department`, `technician request` |
+| **Intents** | `request_transfer`, `technical_inquiry` |
+| **Sentiment** | Overall: `neutral` (score: 0.12) |
+
+---
+
+## 🗃️ BigQuery Schema
+
+The tracking table stores the complete lifecycle of each recording:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `contactId` | STRING | CXone contact identifier |
+| `recording_filename` | STRING | Original audio filename |
+| `gcs_uri` | STRING | Cloud Storage path (`gs://bucket/path`) |
+| `fetch_datetime` | TIMESTAMP | When the recording was fetched |
+| `status` | STRING | `SUCCESS`, `FAILED`, `NOT_FOUND`, `NO_RECORDING` |
+| `raw_response` | STRING | Full CXone API response (JSON) |
+| `transcription` | STRING | Diarized conversation transcript |
+| `transcription_raw` | STRING | Plain text transcript |
+| `summary` | STRING | AI-generated call summary |
+| `topics` | STRING | Detected topics (JSON) |
+| `intents` | STRING | Detected intents (JSON) |
+| `sentiment` | STRING | Sentiment analysis (JSON) |
+| `transcribed` | INTEGER | Transcription flag (0/1) |
+| `analysed` | INTEGER | Analysis flag (0/1) |
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python 3.10+
+- [uv](https://docs.astral.sh/uv/) package manager
+- Google Cloud project with BigQuery & Cloud Storage
+- NICE CXone API credentials
+- Deepgram API key ([free tier available](https://console.deepgram.com))
+
+### Setup
+
 ```bash
-# Copy the example environment file
+# Clone the repository
+git clone <repo-url>
+cd ringcentral_callrecordings
+
+# Install dependencies
+uv sync --locked
+
+# Configure credentials
 cp .env.example .env
-
-# Edit .env and add your actual credentials
-nano .env  # or use your preferred editor
+# Edit .env with your actual credentials
 ```
 
-3. **Update the `.env` file with your credentials:**
-```env
-CXONE_USERNAME=your_actual_username
-CXONE_PASSWORD=your_actual_password
-CXONE_CLIENT_ID=your_actual_client_id
-CXONE_CLIENT_SECRET=your_actual_client_secret
-```
-
-## Usage
-
-### Standalone Script
-
-Run the authentication script directly to test your credentials:
+### Run Locally
 
 ```bash
-python auth.py
+# Step 1: Fetch recordings & upload to GCS
+uv run python main.py
+
+# Step 2: Transcribe & analyze recordings
+uv run python transcribe_v2.py
 ```
 
-### Using in Your Code
+### Deploy to Google Cloud
 
-Import and use the `CXoneAuthenticator` class in your own scripts:
+```bash
+# Build Docker image
+docker build -t gcr.io/$PROJECT_ID/cxone-recording-fetcher .
 
-```python
-from auth import CXoneAuthenticator
-import requests
+# Push to Container Registry
+docker push gcr.io/$PROJECT_ID/cxone-recording-fetcher
 
-# Create authenticator (credentials loaded from .env)
-auth = CXoneAuthenticator()
+# Create Cloud Run Job — Recording Fetcher
+gcloud run jobs create cxone-recording-fetcher \
+  --image gcr.io/$PROJECT_ID/cxone-recording-fetcher \
+  --region $REGION \
+  --memory 4Gi --cpu 2
 
-# Get access token
-token = auth.get_access_token()
-
-# Use the token in API requests
-headers = auth.get_auth_header()
-
-# Example API call
-response = requests.get(
-    "https://api.niceincontact.com/some-endpoint",
-    headers=headers
-)
+# Create Cloud Run Job — Transcriber (same image, different entrypoint)
+gcloud run jobs create cxone-transcriber \
+  --image gcr.io/$PROJECT_ID/cxone-recording-fetcher \
+  --command "uv,run,python,transcribe_v2.py" \
+  --region $REGION \
+  --memory 4Gi --cpu 2
 ```
 
-### Manual Credential Passing
+See [DEPLOYMENT.md](DEPLOYMENT.md) for full deployment guide with secret management.
 
-You can also pass credentials directly (not recommended for production):
+---
 
-```python
-auth = CXoneAuthenticator(
-    username="your_username",
-    password="your_password",
-    client_id="your_client_id",
-    client_secret="your_client_secret"
-)
+## 📁 Project Structure
+
+```
+├── auth.py              # CXone OAuth 2.0 authentication
+├── fetch_recordings.py  # Recording metadata & download logic
+├── main.py              # Batch recording fetcher pipeline
+├── transcribe_v2.py     # Deepgram transcription & analysis pipeline
+├── transcribe.py        # Local transcription (Whisper, for testing)
+├── Dockerfile           # Optimized container with uv
+├── .env.example         # Environment variable template
+├── DEPLOYMENT.md        # GCP deployment guide
+├── QUICKSTART.md        # Local setup & testing guide
+└── pyproject.toml       # Python dependencies
 ```
 
-## API Response
+---
 
-The authentication returns the following response:
+## 🛠️ Tech Stack
 
-```json
-{
-    "access_token": "eyJhbGci...",
-    "token_type": "Bearer",
-    "expires_in": 3600,
-    "refresh_token": "eyJhbGci...",
-    "id_token": "eyJhbGci...",
-    "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"
-}
+| Layer | Technology |
+|-------|-----------|
+| **Language** | Python 3.10+ |
+| **Package Manager** | uv (Astral) |
+| **CXone API** | OAuth 2.0, Media Playback API |
+| **Speech-to-Text** | Deepgram Nova-3 |
+| **Audio Intelligence** | Deepgram (Summarization, Topics, Intents, Sentiment) |
+| **Cloud Storage** | Google Cloud Storage |
+| **Data Warehouse** | Google BigQuery |
+| **Containerization** | Docker |
+| **Deployment** | Google Cloud Run Jobs |
+| **Secrets** | Google Secret Manager |
+
+---
+
+## 🔒 Security
+
+- All API credentials stored in environment variables (`.env`)
+- `.gitignore` configured to exclude secrets, credentials, and local recordings
+- Google Secret Manager integration for cloud deployment
+- GCS signed URLs with 15-minute expiry for Deepgram access
+- Service account with least-privilege IAM roles
+
+---
+
+## 📈 Monitoring
+
+### BigQuery — Processing Status
+```sql
+SELECT status, COUNT(*) as count
+FROM `project.dataset.recording_fetch_status`
+GROUP BY status;
 ```
 
-## Class Methods
-
-### `CXoneAuthenticator`
-
-- **`__init__(username, password, client_id, client_secret)`** - Initialize with credentials
-- **`authenticate()`** - Perform authentication and get tokens
-- **`get_access_token()`** - Get a valid access token (auto-refreshes if expired)
-- **`is_token_expired()`** - Check if current token is expired
-- **`get_auth_header()`** - Get authorization header dict for API requests
-
-## Error Handling
-
-The script includes comprehensive error handling:
-
-- ❌ Missing credentials validation
-- ❌ HTTP error responses
-- ❌ Network timeout handling
-- ❌ Invalid response parsing
-
-## Security Notes
-
-⚠️ **Important:**
-- Never commit your `.env` file to version control
-- The `.gitignore` file is configured to exclude `.env`
-- Keep your credentials secure and rotate them regularly
-- Use environment variables in production environments
-
-## Troubleshooting
-
-**"Recording not found" error (404):**
+### BigQuery — Transcription Progress
+```sql
+SELECT
+  COUNTIF(transcribed = 1) AS transcribed,
+  COUNTIF(transcribed IS NULL OR transcribed = 0) AS pending,
+  COUNT(*) AS total
+FROM `project.dataset.recording_fetch_status`
+WHERE status = 'SUCCESS';
 ```
-⚠️  Recording not found for contact ID: 507992643276
-   This contact either:
-   - Doesn't exist in the system
-   - Doesn't have a recording
-   - Recording has expired or been deleted
+
+### Cloud Run — Job Logs
+```bash
+gcloud logging read "resource.type=cloud_run_job" --limit 50
 ```
-This is **not an error with the script** - it means the specific contact ID you're trying to fetch doesn't have an available recording. Make sure you're using a contact ID that:
-- Exists in your CXone system
-- Has a completed call with recording enabled
-- The recording hasn't expired or been deleted
 
-**Authentication fails:**
-- Verify your credentials are correct in `.env`
-- Check that your client_id and client_secret are valid
-- Ensure your account has API access enabled
+---
 
-**Import errors:**
-- Make sure you've installed all dependencies: `pip install -r requirements.txt` or use `uv`
+## 📄 License
 
-**Token expired errors:**
-- The class automatically handles token expiry and re-authentication
-- If issues persist, manually call `authenticate()` again
-
-## License
-
-This script is provided as-is for use with NICE inContact CXone API.
+This project is provided as-is for use with NICE inContact CXone API and Deepgram.
