@@ -1,8 +1,8 @@
 # 🎙️ CXone Call Recording Pipeline
 
-**End-to-end cloud pipeline for fetching, storing, transcribing, and analyzing call center recordings at scale.**
+**End-to-end cloud pipeline for fetching, storing, transcribing, analyzing, and AI-classifying call center recordings at scale.**
 
-Built with Python · NICE CXone API · Google Cloud Platform · Deepgram AI
+Built with Python · NICE CXone API · Google Cloud Platform · Deepgram AI · Gemini 2.0 Flash (Vertex AI)
 
 ---
 
@@ -15,7 +15,8 @@ This production-ready pipeline processes **80,000+ call recordings** automatical
 3. **Transcribes** recordings using Deepgram's Nova-3 speech-to-text model
 4. **Identifies speakers** with AI-powered diarization (Speaker 1, Speaker 2, etc.)
 5. **Analyzes** each call for sentiment, topics, intents, and generates summaries
-6. **Tracks** everything in BigQuery with full audit trail and resume capability
+6. **Classifies** calls using Gemini 2.0 Flash — extracting call type, sale result, product categories, agent name, escalations, and confidence scores
+7. **Tracks** everything in BigQuery with full audit trail and resume capability
 
 All processing is idempotent — the pipeline can be stopped and restarted at any point without reprocessing completed records.
 
@@ -52,6 +53,28 @@ All processing is idempotent — the pipeline can be stopped and restarted at an
                     │  BigQuery    │
                     │  Tracking    │
                     │  Table       │
+                    └──────┬───────┘
+                           │
+                    ┌──────▼───────┐
+                    │  Gemini 2.0  │
+                    │  Flash AI    │
+                    │  (Vertex AI) │
+                    └──────┬───────┘
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+    ┌─────▼─────┐   ┌─────▼─────┐   ┌─────▼─────┐
+    │ Call Type │   │ Sale      │   │ Product   │
+    │ Classify  │   │ Result    │   │ Category  │
+    │           │   │ Analysis  │   │ Detection │
+    └─────┬─────┘   └─────┬─────┘   └─────┬─────┘
+          │                │                │
+          └────────────────┼────────────────┘
+                           │
+                    ┌──────▼───────┐
+                    │  BigQuery    │
+                    │Classifications│
+                    │  Table       │
                     └──────────────┘
 ```
 
@@ -78,9 +101,24 @@ All processing is idempotent — the pipeline can be stopped and restarted at an
   - 🎯 **Intent Recognition** — Detects caller intent (complaint, inquiry, etc.)
   - 💬 **Sentiment Analysis** — Per-segment and overall sentiment scoring
 
+### AI Call Classification (`classify_calls.py`)
+- **Gemini 2.0 Flash** — Google's latest LLM via Vertex AI for structured call classification
+- **Multi-dimensional classification** — Each call analyzed across 9 categories:
+  - 📋 **Call Type** — Product enquiry, order placement, support, complaint, etc.
+  - 💰 **Sale Result** — Sale completed, intended, declined, unable to fulfill
+  - ❌ **No Sale Reasons** — Price objection, out of stock, competitor mention, etc.
+  - 🏷️ **Product Family & Category** — Chainsaw, outdoor power, engines, pumps, fencing, etc.
+  - ⚠️ **Problems Detected** — Customer frustration, wrong part, staff knowledge gap
+  - 🚚 **Delivery Tracking** — Carrier, customer action, reason for enquiry
+  - 👤 **Agent Name** — Extracted from call introduction
+  - 📞 **Escalation Actions** — Mechanic callback, manager escalation, follow-ups
+  - 🎯 **Confidence Scores** — Per-section and overall confidence ratings
+- **Structured JSON output** — Consistent schema for analytics and reporting
+- **Model fallback** — Primary model with automatic fallback to stable model
+
 ### Cloud Deployment
 - **Dockerized** — Optimized multi-layer Dockerfile with `uv` package manager
-- **Cloud Run Jobs** — Two independent jobs from a single Docker image
+- **Cloud Run Jobs** — Three independent jobs from a single Docker image
 - **Secret Manager** — API credentials secured via Google Secret Manager
 - **Cost-effective** — Pay-per-execution pricing, no idle costs
 
@@ -110,7 +148,9 @@ Speaker 2: Hey, Simon. I've got a question about my Honda engine...
 
 ## 🗃️ BigQuery Schema
 
-The tracking table stores the complete lifecycle of each recording:
+### Tracking Table (`recording_fetch_status`)
+
+Stores the complete lifecycle of each recording:
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -128,6 +168,31 @@ The tracking table stores the complete lifecycle of each recording:
 | `sentiment` | STRING | Sentiment analysis (JSON) |
 | `transcribed` | INTEGER | Transcription flag (0/1) |
 | `analysed` | INTEGER | Analysis flag (0/1) |
+| `gemini_analysed` | INTEGER | Gemini classification flag (0/1) |
+
+### Classifications Table (`call_classifications`)
+
+Stores structured Gemini AI classification results:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `call_id` | STRING | Unique call identifier |
+| `contactId` | STRING | CXone contact identifier |
+| `call_date` | DATE | Date of classification |
+| `transcript` | STRING | Call transcript |
+| `classification_version` | STRING | Classification prompt version |
+| `classification_timestamp` | TIMESTAMP | When classified |
+| `llm_model` | STRING | Gemini model used |
+| `call_type` | ARRAY<STRING> | Classified call types |
+| `sale_result` | STRING | Sale outcome |
+| `no_sale_reasons` | ARRAY<STRING> | Reasons sale didn't complete |
+| `product_family` | STRING | Product category |
+| `product_category_detail` | ARRAY<STRING> | Detailed product categories |
+| `problems_detected` | ARRAY<STRING> | Issues identified |
+| `escalation_actions` | ARRAY<STRING> | Follow-up actions |
+| `agent_name` | STRING | Extracted agent name |
+| `delivery_tracking` | STRUCT | Carrier, action, reasons |
+| `confidence_scores` | STRUCT | Per-section confidence (0.0–1.0) |
 
 ---
 
@@ -163,6 +228,9 @@ uv run python main.py
 
 # Step 2: Transcribe & analyze recordings
 uv run python transcribe_v2.py
+
+# Step 3: Classify calls with Gemini AI
+uv run python classify_calls.py
 ```
 
 ### Deploy to Google Cloud
@@ -186,6 +254,13 @@ gcloud run jobs create cxone-transcriber \
   --command "uv,run,python,transcribe_v2.py" \
   --region $REGION \
   --memory 4Gi --cpu 2
+
+# Create Cloud Run Job — Classifier (same image, different entrypoint)
+gcloud run jobs create cxone-classifier \
+  --image gcr.io/$PROJECT_ID/cxone-recording-fetcher \
+  --command "uv,run,python,classify_calls.py" \
+  --region $REGION \
+  --memory 2Gi --cpu 1
 ```
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for full deployment guide with secret management.
@@ -197,8 +272,9 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for full deployment guide with secret managem
 ```
 ├── auth.py              # CXone OAuth 2.0 authentication
 ├── fetch_recordings.py  # Recording metadata & download logic
-├── main.py              # Batch recording fetcher pipeline
-├── transcribe_v2.py     # Deepgram transcription & analysis pipeline
+├── main.py              # Phase 1: Batch recording fetcher pipeline
+├── transcribe_v2.py     # Phase 2: Deepgram transcription & analysis pipeline
+├── classify_calls.py    # Phase 3: Gemini AI call classification pipeline
 ├── transcribe.py        # Local transcription (Whisper, for testing)
 ├── Dockerfile           # Optimized container with uv
 ├── .env.example         # Environment variable template
@@ -218,6 +294,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for full deployment guide with secret managem
 | **CXone API** | OAuth 2.0, Media Playback API |
 | **Speech-to-Text** | Deepgram Nova-3 |
 | **Audio Intelligence** | Deepgram (Summarization, Topics, Intents, Sentiment) |
+| **LLM Classification** | Google Gemini 2.0 Flash via Vertex AI |
 | **Cloud Storage** | Google Cloud Storage |
 | **Data Warehouse** | Google BigQuery |
 | **Containerization** | Docker |
@@ -253,6 +330,18 @@ SELECT
   COUNT(*) AS total
 FROM `project.dataset.recording_fetch_status`
 WHERE status = 'SUCCESS';
+```
+
+### BigQuery — Classification Results
+```sql
+SELECT
+  sale_result,
+  product_family,
+  COUNT(*) AS total,
+  AVG(confidence_scores.overall_confidence) AS avg_confidence
+FROM `project.dataset.call_classifications`
+GROUP BY sale_result, product_family
+ORDER BY total DESC;
 ```
 
 ### Cloud Run — Job Logs
