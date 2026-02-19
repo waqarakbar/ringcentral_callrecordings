@@ -21,6 +21,7 @@ DATASET_ID = os.getenv("GCP_DATASET_ID")
 SOURCE_TABLE_NAME = os.getenv("GCP_SOURCE_TABLE")
 TRACKING_TABLE_NAME = os.getenv("GCP_TRACKING_TABLE")
 BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
+CUTOFF_DATE = os.getenv("CUTOFF_DATE")  # Optional: e.g. "2026-02-16" — skip contacts before this date
 
 # Validate required environment variables
 required_vars = {
@@ -42,6 +43,9 @@ if missing_vars:
 SOURCE_TABLE = f"{PROJECT_ID}.{DATASET_ID}.{SOURCE_TABLE_NAME}"
 TRACKING_TABLE = f"{PROJECT_ID}.{DATASET_ID}.{TRACKING_TABLE_NAME}"
 
+if CUTOFF_DATE:
+    print(f"📅 Cutoff date set: {CUTOFF_DATE} (skipping contacts before this date)")
+
 # API Rate Limit Buffer (Seconds)
 SLEEP_TIME = 1.5  # Adjust based on your API tier
 
@@ -61,6 +65,15 @@ def ensure_tracking_table(bq_client):
         bigquery.SchemaField("fetch_datetime", "TIMESTAMP", mode="NULLABLE"),
         bigquery.SchemaField("status", "STRING", mode="NULLABLE"),  # SUCCESS, FAILED, NOT_FOUND, NO_RECORDING
         bigquery.SchemaField("raw_response", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("transcribed", "INTEGER", mode="NULLABLE"),
+        bigquery.SchemaField("analysed", "INTEGER", mode="NULLABLE"),
+        bigquery.SchemaField("transcription", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("transcription_raw", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("summary", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("topics", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("intents", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("sentiment", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("gemini_analysed", "INTEGER", mode="NULLABLE"),
     ]
     table_ref = bigquery.Table(TRACKING_TABLE, schema=schema)
     try:
@@ -80,6 +93,7 @@ def get_pending_contacts(bq_client, limit=None):
         limit: Optional limit for testing (e.g., 10 for first batch)
     """
     limit_clause = f"LIMIT {limit}" if limit else ""
+    cutoff_clause = f"AND src.startDate >= '{CUTOFF_DATE}'" if CUTOFF_DATE else ""
     
     # Cast contactId to STRING to match tracking table type
     query = f"""
@@ -88,6 +102,7 @@ def get_pending_contacts(bq_client, limit=None):
         LEFT JOIN `{TRACKING_TABLE}` trk
         ON CAST(src.contactId AS STRING) = trk.contactId
         WHERE trk.contactId IS NULL
+        {cutoff_clause}
         order by src.startDate desc
         {limit_clause}
     """
@@ -96,12 +111,26 @@ def get_pending_contacts(bq_client, limit=None):
     return df['contactId'].tolist()
 
 def save_to_bq(bq_client, row_data):
-    """Stream a single result row to BigQuery."""
-    errors = bq_client.insert_rows_json(TRACKING_TABLE, [row_data])
-    if errors:
-        print(f"  ✗ Error inserting into BigQuery: {errors}")
-    else:
+    """Insert a single result row to BigQuery using DML INSERT."""
+    query = f"""
+        INSERT INTO `{TRACKING_TABLE}` (contactId, recording_filename, gcs_uri, fetch_datetime, status, raw_response)
+        VALUES (@contactId, @recording_filename, @gcs_uri, @fetch_datetime, @status, @raw_response)
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("contactId", "STRING", row_data.get("contactId")),
+            bigquery.ScalarQueryParameter("recording_filename", "STRING", row_data.get("recording_filename")),
+            bigquery.ScalarQueryParameter("gcs_uri", "STRING", row_data.get("gcs_uri")),
+            bigquery.ScalarQueryParameter("fetch_datetime", "STRING", row_data.get("fetch_datetime")),
+            bigquery.ScalarQueryParameter("status", "STRING", row_data.get("status")),
+            bigquery.ScalarQueryParameter("raw_response", "STRING", row_data.get("raw_response")),
+        ]
+    )
+    try:
+        bq_client.query(query, job_config=job_config).result()
         print(f"  ✓ Logged to BigQuery")
+    except Exception as e:
+        print(f"  ✗ Error inserting into BigQuery: {e}")
 
 def upload_to_gcs(bucket, blob_name, local_file_path):
     """Upload a file from local path to GCS."""
@@ -143,6 +172,10 @@ def main():
 
     for contact_id in pending_ids:
         processed_count += 1
+        
+        # if processed_count > 4:
+        #     break
+
         print(f"\n{'='*70}")
         print(f"[{processed_count}/{len(pending_ids)}] Processing contact: {contact_id}")
         print('='*70)

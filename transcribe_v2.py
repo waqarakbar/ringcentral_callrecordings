@@ -74,6 +74,7 @@ def ensure_new_columns(bq_client):
         bigquery.SchemaField("topics", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("intents", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("sentiment", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("gemini_analysed", "INTEGER", mode="NULLABLE"),
     ]
 
     table = bq_client.get_table(TRACKING_TABLE)
@@ -466,7 +467,7 @@ def main():
 
     # Get pending transcriptions
     # Set limit for testing, remove or set to None for full processing
-    pending = get_pending_transcriptions(bq_client, limit=5)
+    pending = get_pending_transcriptions(bq_client, limit=10)
 
     print(f"\n✓ Found {len(pending)} recordings to transcribe.\n")
 
@@ -481,8 +482,8 @@ def main():
     for record in pending:
 
         # for testing lets do only 1 call
-        if processed >= 4:
-            break
+        # if processed >= 10:
+        #     break
         
         processed += 1
         contact_id = record["contactId"]
